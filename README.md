@@ -9,7 +9,7 @@ It also compiles the `dng_validate` command that comes with the SDK.
 
 ## Building the SDK on Linux
 
-```
+```sh
 sudo apt install build-essentials zlib1g-dev libexpat1-dev
 
 git clone https://github.com/abworrall/go-dng.git
@@ -30,20 +30,45 @@ Caveats:
 
 ## Using the SDK from Go
 
-There is also a Go wrapper around the lib, that will load and
+This repo contains a Go wrapper around the lib, that will load and
 DNG-develop a DNG file, and present it as a standard golang
 `image.Image`.
 
-I don't know of a way to make `go get` work with this lib, as building
-it requires running a makefile. So you'll need to follow the steps
-above, taking care to `git clone` it into
-`~/go/src/github.com/abworrall` so golang will find it.
+There isn't a way to make `go get` work automatically with this
+package, as building the SDK libs require running a makefile. So there
+are a few steps ...
 
-Caveats:
+- step 1: build the SDK, as per the section above.
+- step 2: tell the go toolchain where to find the freshly built SDK
+- step 3: now you can `go get github.com/abworrall/go-dng` and it will work
+
+```sh
+sudo apt install build-essentials zlib1g-dev libexpat1-dev
+
+# Step 1: build the SDK
+git clone https://github.com/abworrall/go-dng.git
+cd go-dng
+cd ./sdk
+make
+export SDK=`pwd`
+
+# Step 2: tell the go toolchain where the SDK is
+export CGO_CPPFLAGS=-I$(SDK)/include
+export CGO_LDFLAGS=-L(SDK)/lib
+
+# Step 3: use go toolchain to install package, develop, etc
+cd ~/my_repos/my_package/
+go get github.com/abworrall/go-dng
+go run foo/bar
+```
+
+You can install the lib & includes into your system dirs or anywhere
+else; just make sure the go toolchain can find them.
+
+Caveats for the go wrapper:
 - the Go bindings of the API are very incomplete, but easy to extend
 - the DNG SDK is in C++, so everything needs to be wrapped into plain old C
 - there will be memory leaks, esp in the image handling
-
 
 ### Working with rendered data
 
@@ -86,7 +111,7 @@ func main() {
   img := n.NewImage(dng.ImageStage3) // is an image.Image
 
   // RGB representing a neutral white color, given the white reference point
-  asShotNeutral := n.CameraWhite() // 
+  asShotNeutral := n.CameraWhite()
 
   // Matrix mapping camera native colors to 'profile connection space', CIEXYZ
   forwardMatrix := n.CameraToPCS()

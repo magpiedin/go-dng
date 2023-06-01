@@ -124,6 +124,6 @@ func main() {
   asShotNeutral := img.CameraWhite()
 
   // Matrix mapping camera native colors to 'profile connection space', CIEXYZ
-  forwardMatrix := img.CameraToPCS()
+  kindaForwardMatrix := img.CameraToPCS()
 }
 ```

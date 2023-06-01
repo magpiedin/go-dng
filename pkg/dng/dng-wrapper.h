@@ -23,10 +23,16 @@ extern "C" {
     uint32_t v[3];
   } CURat;
 
+  // The kinds of image you can pull out of a negative. (Stage 1
+  // is the raw data; Stage 2 is linearized but not-yet-demosaic'ed,
+  // so ignore for now).
+  enum GO_ImageKind { ImageUndefined = 0, ImageStage3, ImageFinalRender };
+
   // Arguments passed in from Golang, to control how we load & develop the image.
   typedef struct cnegativeargs {
     int verbose;
     int white_balance_temp;
+    int image_kind;
   } CNegativeArgs;
 
   // Our main types for holding pointers to the C++ objects we create
@@ -35,33 +41,24 @@ extern "C" {
     void *negative;     // (void *) to a (dng_negative *)
     void *colorspec;    // (void *) to a (dng_color_spec *)
     void *image_final;  // (void *) to a (dng_image *) which is in fact a (dng_simple_image *)
+    void *pixelbuffer;  // (void *) to a (dng_pixel_buffer *), for the chosen image_kind
   } CNegative;
-
-  typedef struct cpixelbuffer {
-    void* pixelbuffer;  // (void *) to a (dng_pixel_buffer *)
-  } CPixelBuffer;
   
-  // The kinds of image you can pull out of a negative. (Stage 1
-  // is the raw data; Stage 2 is linearized but not-yet-demosaic'ed,
-  // so ignore for now).
-  enum GO_ImageKind { ImageStage3, ImageFinalRender }; // see vimage.go
 
   CNegative*    GO_Make(const char *filename, CNegativeArgs args);
   void          GO_Free(CNegative *cneg);
-  
-  const char*   GO_OriginalRawFileName(CNegative *cneg);
+
+  void          GO_GetPixelRGB(CNegative *cneg, int x, int y, uint16_t *dst);
   CRect         GO_Bounds(CNegative *cneg);
+  
   CVec3         GO_CameraWhite(CNegative *cneg);
   CMat3         GO_CameraToPCS(CNegative *cneg);
+
+  const char*   GO_OriginalRawFileName(CNegative *cneg);
 
   CURat         GO_ExifExposureTime(CNegative *cneg);
   CURat         GO_ExifFNumber(CNegative *cneg);
   uint32_t      GO_ExifISO(CNegative *cneg);
-
-  // CPixelBuffer is the bit of a DNG image we can get pixel data from
-  CPixelBuffer *GO_MakePixelBuffer(CNegative *cneg, int kind);
-  CRect         GO_PixelBuffer_Bounds(CPixelBuffer *cpix);
-  void          GO_PixelBuffer_GetPixel(CPixelBuffer *cpix, int x, int y, uint16_t *dst);
   
 #ifdef __cplusplus
 }  // extern "C"

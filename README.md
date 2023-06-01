@@ -1,11 +1,12 @@
 # The DNG SDK for linux & go
 
-Adobe's DNG SDK comes with only partial support for Linux. The
-makefiles in this repo will fetch and compile version 1.6 of the SDK
-on Linux (tested on Ubuntu 23.04), building the SDK as two static
-libraries that end up in `./sdk/lib`.
+Adobe's DNG SDK comes with only partial support for building on Linux.
+The makefiles in this repo will fetch, patch, and compile version 1.6 of the
+SDK on Linux (tested on Ubuntu 23.04), building the SDK as two static
+libraries that end up in `./sdk/lib` and `./sdk/include`.
 
-It also compiles the `dng_validate` command that comes with the SDK.
+It also compiles the SDK's `dng_validate` command, so you can use it
+on Linux.
 
 ## Building the SDK on Linux
 
@@ -65,6 +66,19 @@ go run foo/bar
 You can install the lib & includes into your system dirs or anywhere
 else; just make sure the go toolchain can find them.
 
+If you see an error like this when running your go code, or one about
+missing `dng` or `xmp` libraries, then the go toolchain can't find the
+SDK includes:
+
+```
+$ go test
+# github.com/abworrall/go-dng/pkg/dng
+dng-wrapper.cpp:3:10: fatal error: dng_color_space.h: No such file or directory
+    3 | #include "dng_color_space.h"
+      |          ^~~~~~~~~~~~~~~~~~~
+compilation terminated.
+```
+
 Caveats for the go wrapper:
 - the Go bindings of the API are very incomplete, but easy to extend
 - the DNG SDK is in C++, so everything needs to be wrapped into plain old C
@@ -82,9 +96,7 @@ func main() {
   n := dng.Negative{}
   //n.WhiteBalanceTemp = 5500; // Can override the white reference
 
-  n.Load("my.dng")
-
-  img := n.NewImage(dng.ImageFinalRender) // is an image.Image
+  n.Load("my.dng") // `n` is an image.Image
 
   // See cmd/go-dng-validate/go-dng-validate.go for a longer example
 }
@@ -105,10 +117,8 @@ DNG, that account for the camera's development profile.
 import "github.com/abworrall/go-dng/pkg/dng"
 
 func main() {
-  n := dng.Negative{}
+  n := dng.Negative{ImageKind: dng.ImageStage3}
   n.Load("my.dng")
-
-  img := n.NewImage(dng.ImageStage3) // is an image.Image
 
   // RGB representing a neutral white color, given the white reference point
   asShotNeutral := n.CameraWhite()

@@ -30,15 +30,24 @@ func main() {
 		fmt.Printf("- EXIF - FNumber     : %v\n", n.ExifFNumber())
 		fmt.Printf("- EXIF - ISO         : %v\n", n.ExifISO())
 
-		img3 := n.NewImage(dng.ImageStage3)
-		fmt.Printf("stage3 img: %v\n", img3.Bounds())
-		WritePNG(img3, fmt.Sprintf("%s-s3.png", arg))
-		
-		imgFinal := n.NewImage(dng.ImageFinalRender)
-		fmt.Printf("final img : %v\n", imgFinal.Bounds())
-		WritePNG(imgFinal, fmt.Sprintf("%s-sF.png", arg))
+		fname := fmt.Sprintf("%s-sF.png", arg)
+		fmt.Printf("final rendered img : %v (%s)\n", n.Bounds(), fname)
+		if err := WritePNG(n, fname); err != nil {
+			fmt.Printf("Error saving image %s: %v\n", fname, err)
+		}
+
+		// Now dump stage3 data !
+		n2 := dng.Negative{ImageKind: dng.ImageStage3}
+		n2.Load(arg)
+
+		fname = fmt.Sprintf("%s-s3.png", arg)
+		fmt.Printf("stage3 rendered img : %v (%s)\n", n2.Bounds(), fname)
+		if err := WritePNG(n2, fname); err != nil {
+			fmt.Printf("Error saving s3 image %s: %v\n", fname, err)
+		}
 	
 		n.Free()
+		n2.Free()
 	}
 }
 

@@ -28,8 +28,8 @@
 // Helper functions just for this file
 dng_negative*     AsNeg(CNegative *cneg)       { return reinterpret_cast<dng_negative*>(cneg->negative); }
 dng_color_spec*   AsColorSpec(CNegative *cneg) { return reinterpret_cast<dng_color_spec*>(cneg->colorspec); }
-dng_image*        AsImage(void *ptr)           { return reinterpret_cast<dng_image*>(ptr); }
-dng_pixel_buffer* AsPixBuf(CPixelBuffer *cpix) { return reinterpret_cast<dng_pixel_buffer*>(cpix->pixelbuffer); }
+dng_image*        AsImage(CNegative *cneg)     { return reinterpret_cast<dng_image*>(cneg->image_final); }
+dng_pixel_buffer* AsPixBuf(CNegative *cneg)    { return reinterpret_cast<dng_pixel_buffer*>(cneg->pixelbuffer); }
 
 // Convert C++ objects to our POD C types, so we can return them into Golang.
 CURat AsCUrat(dng_urational v) {
@@ -87,13 +87,39 @@ uint32_t GO_ExifISO(CNegative *cneg) {
   return exif->fISOSpeedRatings[exif->fISOSpeed];
 }
 
+dng_pixel_buffer *makePixelBuffer(CNegative *cneg, int kind)
+{
+  // We want (dng_simple_image)s, as they have prebuilt (dng_pixel_buffer)s.
+  // Creating a pixel buffer by hand, using a regular image, needs an
+  // internal adobe helper; but luckily we don't have to, because the API
+  // creates dng_simple_images under the hood and we can just cast them back.
+  dng_simple_image *s_img;
+  
+  switch (kind) {
+  case ImageStage3:
+    s_img = (dng_simple_image *)(AsNeg(cneg)->Stage3Image()); // cast is safe for the StageNImage()s
+    break;
+
+  default:
+  case ImageUndefined:    // If undefined, default to FinalRender
+  case ImageFinalRender:
+    s_img = (dng_simple_image *)(AsImage(cneg)); // cast is safe for output of render.Render()
+    break;
+  }
+
+  dng_pixel_buffer *buf = new dng_pixel_buffer;
+  s_img->GetPixelBuffer(*buf);
+
+  return buf;
+}
+
 CNegative *GO_Make(const char *filename, CNegativeArgs args)
 {
   CNegative *cneg = (CNegative *)malloc(sizeof(CNegative));
 
   //printf ("Loading \"%s\"...\n", filename);
 
-  // globals from dng_validate.cpp
+  // globals in dng_validate.cpp
   static int32 gMosaicPlane = -1;
   static const dng_color_space *gFinalSpace = &dng_space_sRGB::Get();
   static uint32 gFinalPixelType = ttByte; // 8 bits per channel
@@ -190,7 +216,8 @@ CNegative *GO_Make(const char *filename, CNegativeArgs args)
   cneg->negative    = negative;
   cneg->image_final = image_final;
   cneg->colorspec   = colorspec;
-
+  cneg->pixelbuffer = makePixelBuffer(cneg, args.image_kind);
+  
   return cneg;
 }
 
@@ -203,46 +230,16 @@ void GO_Free(CNegative *cneg)
     free(AsColorSpec(cneg));
   }
   if (cneg->image_final != NULL) {
-    free(AsImage(cneg->image_final));
+    free(AsImage(cneg));
   }
-
+  // cneg->pixelbuffer ?
   free(cneg);
 }
 
-CPixelBuffer *GO_MakePixelBuffer(CNegative *cneg, int kind)
-{
-  CPixelBuffer *cpix = (CPixelBuffer *)malloc(sizeof(CPixelBuffer));
-
-  // We want (dng_simple_image)s, as they have builtin dng_pixel_buffers.
-  // Creating a pixel buffer by hand, using a regular image, needs an
-  // internal adobe helper; but luckily we don't have to, because the API
-  // create simple iamges under the hood and we can just cast them back.
-  dng_simple_image *s_img;
-
-  switch (kind) {
-  case ImageStage3:
-    s_img = (dng_simple_image *)(AsNeg(cneg)->Stage3Image()); // cast is safe for the StageN images
-    break;
-
-  case ImageFinalRender:
-    s_img = (dng_simple_image *)(AsImage(cneg->image_final)); // cast is safe for output of render.Render()
-    break;
-  }
-
-  dng_pixel_buffer *buf = new dng_pixel_buffer;
-  s_img->GetPixelBuffer(*buf);
-
-  cpix->pixelbuffer = buf;
-  
-  return cpix;
-}
-
-CRect GO_PixelBuffer_Bounds(CPixelBuffer *cpix) { return AsCRect( AsPixBuf(cpix)->fArea ); }
-
 // This function populates `dst` with three RGB uint16s, each scaled to the range [0, 0xFFFF].
-void GO_PixelBuffer_GetPixel(CPixelBuffer *cpix, int x, int y, uint16_t *dst)
+void GO_GetPixelRGB(CNegative *cneg, int x, int y, uint16_t *dst)
 {
-  dng_pixel_buffer *buf = AsPixBuf(cpix);
+  dng_pixel_buffer *buf = AsPixBuf(cneg);
 
   // Sanity checks
   if (buf == NULL) {

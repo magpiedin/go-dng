@@ -29,12 +29,12 @@ const(
 )
 
 
-// Negative holds all the parsed data from the DNG SDK, and exposes
-// bits of it as regular Go objects.
-type Negative struct {
-	WhiteBalanceTemp int
-	Verbose          bool
-	ImageKind        ImageKind
+// An Image holds all the parsed data from the DNG SDK, exposes
+// bits of it as regular Go objects, and implements `image.Image`.
+type Image struct {
+	WhiteBalanceTemp int       // To override the white balance recorded by the camera
+	Verbose          bool      // The DNG libraries full dump of metadata
+	ImageKind        ImageKind // Set this to see Stage3 data
 
 	cneg_           *C.CNegative    // C pointer to a (CNegative *) object
 }
@@ -45,60 +45,60 @@ type Mat3 [9]float64 // row-at-a-time, so index == (x + y*3)
 type URat [2]uint32
 
 // New loads up the DNG file, and performs the DNG development process
-func (n *Negative)Load(filename string) error {
+func (img *Image)Load(filename string) error {
 	filename_ := C.CString(filename) // CString leaks, I think
 	args_     := C.CNegativeArgs{
-		white_balance_temp: C.int(n.WhiteBalanceTemp),
-		image_kind: C.int(n.ImageKind),
+		white_balance_temp: C.int(img.WhiteBalanceTemp),
+		image_kind: C.int(img.ImageKind),
 	}
-	if n.Verbose {
+	if img.Verbose {
 		args_.verbose = 1
 	}
 	
-	n.cneg_    = C.GO_Make(filename_, args_)
+	img.cneg_    = C.GO_Make(filename_, args_)
 
-	if n.cneg_ == nil {
+	if img.cneg_ == nil {
 		return fmt.Errorf("C.GO_Make() failed on DNG file")
 	}
 	return nil
 }
 
 // Free releases all memory associated with the negative ... hopefully
-func (n *Negative)Free() {
-	C.GO_Free(n.cneg_)
-	n.cneg_ = nil
+func (img *Image)Free() {
+	C.GO_Free(img.cneg_)
+	img.cneg_ = nil
 }
 
-func (n Negative)OriginalRawFileName() string { return C.GoString( C.GO_OriginalRawFileName(n.cneg_) ) }
+func (img Image)OriginalRawFileName() string { return C.GoString( C.GO_OriginalRawFileName(img.cneg_) ) }
 
 // CameraWhite returns an RGB color that should be white/neutral,
 // given the white reference / color temperature used by DNG. (That
 // info either comes from the camera via image metadata, or by an
 // override arg set in `Neagtive`). This is basically the DNG
 // AsShotNeutral.
-func (n Negative)CameraWhite() Vec3           { return goVec3( C.GO_CameraWhite(n.cneg_) ) }
+func (img Image)CameraWhite() Vec3           { return goVec3( C.GO_CameraWhite(img.cneg_) ) }
 
 // CameraToPCS returns the transform matrix from camera-native RGB
 // into CIEXYZ(D50?). This isn't quite the DNG ForwardMatrix, because
 // it also bundles the white reference adjustment (matrix `D` in the
 // DNG spec)
-func (n Negative)CameraToPCS() Mat3           { return goMat3( C.GO_CameraToPCS(n.cneg_) ) }
+func (img Image)CameraToPCS() Mat3           { return goMat3( C.GO_CameraToPCS(img.cneg_) ) }
 
-func (n Negative)ExifExposureTime() URat { return goURat( C.GO_ExifExposureTime(n.cneg_) ) }
-func (n Negative)ExifFNumber() URat      { return goURat( C.GO_ExifFNumber(n.cneg_) ) }
-func (n Negative)ExifISO() int           { return int( C.GO_ExifISO(n.cneg_) ) }
+func (img Image)ExifExposureTime() URat { return goURat( C.GO_ExifExposureTime(img.cneg_) ) }
+func (img Image)ExifFNumber() URat      { return goURat( C.GO_ExifFNumber(img.cneg_) ) }
+func (img Image)ExifISO() int           { return int( C.GO_ExifISO(img.cneg_) ) }
 
 
 // Implement image.Image
-func (n Negative)Bounds() image.Rectangle { return goRect( C.GO_Bounds(n.cneg_) ) }
-func (n Negative)ColorModel() color.Model { return color.RGBA64Model }
-func (n Negative)At(x, y int) color.Color {
+func (img Image)Bounds() image.Rectangle { return goRect( C.GO_Bounds(img.cneg_) ) }
+func (img Image)ColorModel() color.Model { return color.RGBA64Model }
+func (img Image)At(x, y int) color.Color {
 	abcd  := make([]uint16, 4) // space for up to four planes, in case we thoughtlessly process stage1/2 data someday
 	abcd_ := (*C.uint16_t)(unsafe.Pointer(&abcd[0])) // convert a Go slice into a (uint16_t *) C array
 	x_    := C.int(x)
 	y_    := C.int(y)
 
-	C.GO_GetPixelRGB(n.cneg_, x_, y_, abcd_)
+	C.GO_GetPixelRGB(img.cneg_, x_, y_, abcd_)
 
 	// Blithely assume first three planes are RGB values in the range [0, 0xFFFF].
 	return color.RGBA64{abcd[0], abcd[1], abcd[2], 0xFFFF}

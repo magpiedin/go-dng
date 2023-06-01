@@ -18,36 +18,36 @@ func main() {
 	for _, arg := range flag.Args() {
 		fmt.Printf("Loading %q as a DNG file\n", arg)
 
-		n := dng.Negative{}
-		n.Load(arg)
+		img := dng.Image{}
+		img.Load(arg)
 
-		fmt.Printf("- OriginalRawFileName: %q\n", n.OriginalRawFileName())
-		fmt.Printf("- CameraWhite: %v\n", n.CameraWhite())
-		fmt.Printf("- CameraToPCS: %v\n", n.CameraToPCS())
-		fmt.Printf("- Negative Bounds: %v\n", n.Bounds())
+		fmt.Printf("- OriginalRawFileName: %q\n", img.OriginalRawFileName())
+		fmt.Printf("- CameraWhite: %v\n", img.CameraWhite())
+		fmt.Printf("- CameraToPCS: %v\n", img.CameraToPCS())
+		fmt.Printf("- Negative Bounds: %v\n", img.Bounds())
 
-		fmt.Printf("- EXIF - ExposureTime: %v\n", n.ExifExposureTime())
-		fmt.Printf("- EXIF - FNumber     : %v\n", n.ExifFNumber())
-		fmt.Printf("- EXIF - ISO         : %v\n", n.ExifISO())
+		fmt.Printf("- EXIF - ExposureTime: %v\n", img.ExifExposureTime())
+		fmt.Printf("- EXIF - FNumber     : %v\n", img.ExifFNumber())
+		fmt.Printf("- EXIF - ISO         : %v\n", img.ExifISO())
 
 		fname := fmt.Sprintf("%s-sF.png", arg)
-		fmt.Printf("final rendered img : %v (%s)\n", n.Bounds(), fname)
-		if err := WritePNG(n, fname); err != nil {
+		fmt.Printf("final rendered img : %s\n", fname)
+		if err := WritePNG(img, fname); err != nil {
 			fmt.Printf("Error saving image %s: %v\n", fname, err)
 		}
 
 		// Now dump stage3 data !
-		n2 := dng.Negative{ImageKind: dng.ImageStage3}
-		n2.Load(arg)
+		img2 := dng.Image{ImageKind: dng.ImageStage3}
+		img2.Load(arg)
 
 		fname = fmt.Sprintf("%s-s3.png", arg)
-		fmt.Printf("stage3 rendered img : %v (%s)\n", n2.Bounds(), fname)
-		if err := WritePNG(n2, fname); err != nil {
+		fmt.Printf("stage3 rendered img : %s\n", fname)
+		if err := WritePNG(img2, fname); err != nil {
 			fmt.Printf("Error saving s3 image %s: %v\n", fname, err)
 		}
 	
-		n.Free()
-		n2.Free()
+		img.Free()
+		img2.Free()
 	}
 }
 

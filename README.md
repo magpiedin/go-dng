@@ -93,10 +93,10 @@ white balance correction, camera color correction, etc.
 import "github.com/abworrall/go-dng/pkg/dng"
 
 func main() {
-  n := dng.Negative{}
-  //n.WhiteBalanceTemp = 5500; // Can override the white reference
+  img := dng.Image{}
+  //img.WhiteBalanceTemp = 5500; // Can override the white reference
 
-  n.Load("my.dng") // `n` is an image.Image
+  img.Load("my.dng") // `img` is an image.Image
 
   // See cmd/go-dng-validate/go-dng-validate.go for a longer example
 }
@@ -117,13 +117,13 @@ DNG, that account for the camera's development profile.
 import "github.com/abworrall/go-dng/pkg/dng"
 
 func main() {
-  n := dng.Negative{ImageKind: dng.ImageStage3}
-  n.Load("my.dng")
+  img := dng.Image{ImageKind: dng.ImageStage3}
+  img.Load("my.dng")
 
   // RGB representing a neutral white color, given the white reference point
-  asShotNeutral := n.CameraWhite()
+  asShotNeutral := img.CameraWhite()
 
   // Matrix mapping camera native colors to 'profile connection space', CIEXYZ
-  forwardMatrix := n.CameraToPCS()
+  forwardMatrix := img.CameraToPCS()
 }
 ```

@@ -54,8 +54,8 @@ make
 export SDK=`pwd`
 
 # Step 2: tell the go toolchain where the SDK is
-export CGO_CPPFLAGS=-I$(SDK)/include
-export CGO_LDFLAGS=-L$(SDK)/lib
+export CGO_CPPFLAGS=-I${SDK}/include
+export CGO_LDFLAGS=-L${SDK}/lib
 
 # Step 3: use go toolchain to install package, develop, etc
 cd ~/my_repos/my_package/

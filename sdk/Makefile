@@ -21,7 +21,7 @@ $(DNGSDK_FILE):
 	wget https://download.adobe.com/pub/adobe/dng/dng_sdk_1_6.zip
 
 $(ZLIB_FILE):
-	wget http://www.zlib.net/zlib-1.2.13.tar.gz
+	wget https://www.zlib.net/fossils/zlib-1.2.13.tar.gz
 
 dngsdk: $(DNGSDK_FILE)
 	unzip $(DNGSDK_FILE)

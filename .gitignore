@@ -2,3 +2,4 @@
 output.dng
 test_1*.dng
 venv
+tiff-to-dng/test-output/

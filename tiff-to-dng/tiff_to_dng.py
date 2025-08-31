@@ -31,20 +31,32 @@ def main():
         print(f"Error: Unable to open file {args.input_file}")
         return
 
-    # Convert image to numpy array and ensure it's uint16
-    image_data = np.asarray(image).astype(np.uint16)
+    # Convert image to numpy array and ensure it's uint16 for pidng
+    image_data = np.asarray(image)
+    
+    if image_data.dtype == np.uint8:
+        image_data = (image_data.astype(np.uint16)) * 257
+    elif image_data.dtype != np.uint16:
+        image_data = image_data.astype(np.uint16)
 
+    bits_per_sample = 16
+    white_level = 65535
+    
     # Create DNG tags for a linear DNG
     tags = DNGTags()
     tags.set(Tag.NewSubfileType, 0) # 0 = Main image
     tags.set(Tag.PhotometricInterpretation, PhotometricInterpretation.Linear_Raw)
 
-    tags.set(Tag.ImageWidth, [image.width])
-    tags.set(Tag.ImageLength, [image.height])
-    tags.set(Tag.BitsPerSample, [16] * len(image.getbands()))
-    tags.set(Tag.SamplesPerPixel, [len(image.getbands())])
-
+    tags.set(Tag.ImageWidth, image.width)
+    tags.set(Tag.ImageLength, image.height)
+    tags.set(Tag.BitsPerSample, bits_per_sample)
+    samples = len(image.getbands())
+    tags.set(Tag.SamplesPerPixel, samples)
     tags.set(Tag.Software, "tiff-to-dng converter")
+
+    # Add tags for a linear DNG
+    tags.set(Tag.BlackLevel, [0] * samples)
+    tags.set(Tag.WhiteLevel, [white_level] * samples)
 
     # Add metadata from TIFF info
     if 'icc_profile' in image.info and image.info['icc_profile']:
@@ -102,17 +114,15 @@ def main():
 
     tags.set(Tag.DNGVersion, DNGVersion.V1_4)
     tags.set(Tag.DNGBackwardVersion, DNGVersion.V1_0)
-    tags.set(Tag.UniqueCameraModel, "tiff-to-dng-converter")
+    tags.set(Tag.UniqueCameraModel, "TIFF")
 
     # Use pidng to convert to DNG
     try:
         dng = RAW2DNG()
-        output_dir = os.path.dirname(args.output_file)
-        if not output_dir:
-            output_dir = "."
-        dng.options(tags, output_dir)
-        output_filename = os.path.basename(args.output_file)
-        dng.convert(image_data, filename=output_filename)
+        # The pidng library seems to ignore the output_dir, so we pass an empty one
+        # and provide the full path to the convert method.
+        dng.options(tags, "")
+        dng.convert(image_data, filename=args.output_file)
         print(f"Successfully converted {args.input_file} to {args.output_file}")
     except Exception as e:
         print(f"Error converting to DNG: {e}")

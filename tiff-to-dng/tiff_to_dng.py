@@ -1,20 +1,21 @@
 '''Convert TIF file to DNG'''
 
+import os
+import xml.etree.ElementTree as ET
 import argparse
+from datetime import datetime
+import numpy as np
 from PIL import Image
 from pidng.core import RAW2DNG
 from pidng.dng import DNGTags, Tag, Type
 from pidng.defs import DNGVersion, PhotometricInterpretation
-import numpy as np
-import os
-import xml.etree.ElementTree as ET
-from datetime import datetime
 
 # Manually define the ICCProfile tag as it's missing from pidng
 ICCProfileTag = (34675, Type.Undefined)
 Tag.ICCProfile = ICCProfileTag # Add it to the Tag class for convenience
 
 def main():
+    '''Setup and run tiff-to-dng conversion'''
     parser = argparse.ArgumentParser(description='Convert a TIFF file to a DNG file.')
     parser.add_argument('input_file', type=str, help='The input TIFF file.')
     parser.add_argument('output_file', type=str, help='The output DNG file.')

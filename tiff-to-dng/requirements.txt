@@ -1,3 +1,4 @@
 Pillow==11.3.0
 tifffile==2025.8.28
 imagecodecs==2025.8.2
+pidng==4.0.9

@@ -1,18 +1,16 @@
-'''Convert TIF file to DNG'''
+'''Convert TIF file to DNG using Pillow/TiffImagePlugin'''
 
-import os
-import xml.etree.ElementTree as ET
 import argparse
-from datetime import datetime
-import numpy as np
-from PIL import Image
-from pidng.core import RAW2DNG
-from pidng.dng import DNGTags, Tag, Type
-from pidng.defs import DNGVersion, PhotometricInterpretation
+import uuid
+from fractions import Fraction
+from PIL import Image, TiffImagePlugin
 
-# Manually define the ICCProfile tag as it's missing from pidng
-ICCProfileTag = (34675, Type.Undefined)
-Tag.ICCProfile = ICCProfileTag # Add it to the Tag class for convenience
+# Helper to convert float to rational tuple
+def float_to_rational(f):
+    '''adjust precision?'''
+    # DNG spec suggests a denominator of 10000 for high precision
+    frac = Fraction(f).limit_denominator(10000)
+    return (frac.numerator, frac.denominator)
 
 def main():
     '''Setup and run tiff-to-dng conversion'''
@@ -24,111 +22,153 @@ def main():
     print(f"Input file: {args.input_file}")
     print(f"Output file: {args.output_file}")
 
-    # Open the TIFF image
     try:
-        image = Image.open(args.input_file)
+        img = Image.open(args.input_file)
     except IOError:
         print(f"Error: Unable to open file {args.input_file}")
         return
 
-    # Convert image to numpy array and ensure it's uint16 for pidng
-    image_data = np.asarray(image)
+    ifd = TiffImagePlugin.ImageFileDirectory_v2()
+
+    # --- Image Data and Basic Info ---
+    if img.mode == 'RGB':
+        bits_per_sample = (8, 8, 8)
+        samples_per_pixel = 3
+    else:
+        print(f"Error: Unsupported image mode '{img.mode}'. Only 'RGB' is supported.")
+        return
+
+    # --- Tag Types (from TiffTags.TYPES) ---
+    BYTE = 1
+    ASCII = 2
+    SHORT = 3
+    LONG = 4
+    RATIONAL = 5
+    SRATIONAL = 10
+    UNDEFINED = 7
+
+    # --- Populate IFD in strict numerical order ---
+
+    # SubfileType (254)
+    ifd[254] = 0
+    ifd.tagtype[254] = LONG
+
+    # ImageWidth (256)
+    ifd[256] = img.width
+    ifd.tagtype[256] = LONG
+
+    # ImageHeight (257)
+    ifd[257] = img.height
+    ifd.tagtype[257] = LONG
+
+    # BitsPerSample (258)
+    ifd[258] = bits_per_sample
+    ifd.tagtype[258] = SHORT
+
+    # Compression (259)
+    # 7 = JPEG. Pillow handles the compression when saving if you specify it.
+    # We will try to save with JPEG compression.
+    ifd[259] = 7
+    ifd.tagtype[259] = SHORT
+
+    # PhotometricInterpretation (262)
+    # 32803 = LinearRaw
+    ifd[262] = 32803
+    ifd.tagtype[262] = SHORT
+
+    # SamplesPerPixel (277)
+    ifd[277] = samples_per_pixel
+    ifd.tagtype[277] = SHORT
+
+    # PlanarConfiguration (284)
+    ifd[284] = 1 # Chunky
+    ifd.tagtype[284] = SHORT
     
-    if image_data.dtype == np.uint8:
-        image_data = (image_data.astype(np.uint16)) * 257
-    elif image_data.dtype != np.uint16:
-        image_data = image_data.astype(np.uint16)
+    # DNGVersion (50706)
+    ifd[50706] = (1, 4, 0, 0)
+    ifd.tagtype[50706] = BYTE
 
-    bits_per_sample = 16
-    white_level = 65535
-    samples = len(image.getbands())
-    
-    # Extract metadata from XMP first, so we can set all tags in order
-    icc_profile = list(image.info['icc_profile']) if 'icc_profile' in image.info and image.info['icc_profile'] else None
-    xmp_datetime = None
-    xmp_datetime_original = None
-    xmp_profile_name = None
+    # DNGBackwardVersion (50707)
+    ifd[50707] = (1, 1, 0, 0)
+    ifd.tagtype[50707] = BYTE
 
-    if 'xmp' in image.info:
-        xmp_data = image.info['xmp']
-        xmp_str = xmp_data.decode('utf-8', 'ignore')
-        xml_start = xmp_str.find('<x:xmpmeta')
-        if xml_start != -1:
-            xmp_str = xmp_str[xml_start:]
-            try:
-                root = ET.fromstring(xmp_str)
-                ns = {
-                    'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
-                    'xmp': 'http://ns.adobe.com/xap/1.0/',
-                    'crs': 'http://ns.adobe.com/camera-raw-settings/1.0/',
-                }
+    # UniqueCameraModel (50708)
+    ifd[50708] = "TIFF"
+    ifd.tagtype[50708] = ASCII
 
-                def format_date(date_str):
-                    try:
-                        if '+' in date_str or ('-' in date_str and date_str.rfind('-') > 7):
-                            dt_obj = datetime.fromisoformat(date_str)
-                        else:
-                            dt_obj = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
-                        return dt_obj.strftime("%Y:%m:%d %H:%M:%S")
-                    except (ValueError, TypeError):
-                        try:
-                            dt_obj = datetime.strptime(date_str.split('.')[0], "%Y-%m-%dT%H:%M:%S")
-                            return dt_obj.strftime("%Y:%m:%d %H:%M:%S")
-                        except:
-                            return None
+    # ColorMatrix1 (50721) - From Nikon D90, as in the example DNG
+    cm1_floats = [1.9625, -0.6108, -0.3414, -0.9787, 1.9161, 0.0335, 0.0286, -0.1407, 1.349]
+    ifd[50721] = sum((float_to_rational(f) for f in cm1_floats), ())
+    ifd.tagtype[50721] = SRATIONAL
 
-                modify_date = root.find('.//xmp:ModifyDate', ns)
-                if modify_date is not None:
-                    xmp_datetime = format_date(modify_date.text)
+    # AnalogBalance (50729)
+    ifd[50729] = (1, 1, 1, 1, 1, 1) # (1/1, 1/1, 1/1)
+    ifd.tagtype[50729] = RATIONAL
 
-                create_date = root.find('.//xmp:CreateDate', ns)
-                if create_date is not None:
-                    xmp_datetime_original = format_date(create_date.text)
+    # AsShotWhiteXY (50730)
+    as_shot_floats = [0.3457, 0.3585]
+    ifd[50730] = sum((float_to_rational(f) for f in as_shot_floats), ())
+    ifd.tagtype[50730] = RATIONAL
 
-                camera_profile = root.find('.//crs:CameraProfile', ns)
-                if camera_profile is not None:
-                    xmp_profile_name = camera_profile.text
+    # BaselineExposure (50732)
+    ifd[50732] = (0, 1)
+    ifd.tagtype[50732] = SRATIONAL
 
-            except ET.ParseError as e:
-                print(f"Error parsing XMP data: {e}")
+    # BaselineNoise (50733)
+    ifd[50733] = (1, 1)
+    ifd.tagtype[50733] = RATIONAL
 
-    # Create DNG tags in ascending numerical order, as required by the spec
-    tags = DNGTags()
-    
-    tags.set(Tag.NewSubfileType, 0)                                      # 254
-    tags.set(Tag.ImageWidth, image.width)                               # 256
-    tags.set(Tag.ImageLength, image.height)                             # 257
-    tags.set(Tag.BitsPerSample, bits_per_sample)                        # 258
-    tags.set(Tag.PhotometricInterpretation, PhotometricInterpretation.Linear_Raw) # 262
-    tags.set(Tag.SamplesPerPixel, samples)                              # 277
-    tags.set(Tag.Software, "tiff-to-dng converter")                     # 305
-    tags.set(Tag.DateTime, xmp_datetime or datetime.now().strftime("%Y:%m:%d %H:%M:%S")) # 306
-    
-    if icc_profile:
-        tags.set(Tag.ICCProfile, icc_profile)                           # 34675
-        
-    if xmp_datetime_original:
-        tags.set(Tag.DateTimeOriginal, xmp_datetime_original)           # 36867
+    # BaselineSharpness (50734)
+    ifd[50734] = (1, 1)
+    ifd.tagtype[50734] = RATIONAL
 
-    tags.set(Tag.DNGVersion, DNGVersion.V1_4)                           # 50706
-    tags.set(Tag.DNGBackwardVersion, DNGVersion.V1_0)                   # 50707
-    tags.set(Tag.UniqueCameraModel, "TIFF")                             # 50708
-    tags.set(Tag.BlackLevel, [0] * samples)                             # 50714
-    tags.set(Tag.WhiteLevel, [white_level] * samples)                   # 50717
-    
-    if xmp_profile_name:
-        tags.set(Tag.ProfileName, xmp_profile_name)                     # 50931
+    # CalibrationIlluminant1 (50778)
+    ifd[50778] = 0 # Unknown
+    ifd.tagtype[50778] = SHORT
 
-    # Use pidng to convert to DNG
+    # RawDataUniqueID (50781)
+    ifd[50781] = uuid.uuid4().bytes
+    ifd.tagtype[50781] = BYTE
+
+    # BlackLevel (50714)
+    ifd[50714] = (0, 1, 0, 1, 0, 1) # Three rationals of 0/1
+    ifd.tagtype[50714] = RATIONAL
+
+    # WhiteLevel (50717)
+    ifd[50717] = (65535, 65535, 65535)
+    ifd.tagtype[50717] = LONG
+
+    # DefaultScale (50780)
+    ifd[50780] = (1, 1, 1, 1)
+    ifd.tagtype[50780] = RATIONAL
+
+    # DefaultCropOrigin (50718)
+    ifd[50718] = (0, 1, 0, 1)
+    ifd.tagtype[50718] = RATIONAL
+
+    # DefaultCropSize (50719)
+    ifd[50719] = (img.width, 1, img.height, 1)
+    ifd.tagtype[50719] = RATIONAL
+
+    # ActiveArea (50829)
+    ifd[50829] = (0, 0, img.height, img.width) # top, left, bottom, right
+    ifd.tagtype[50829] = LONG
+
+    # ShadowScale (50970)
+    ifd[50970] = (1, 1)
+    ifd.tagtype[50970] = RATIONAL
+
+    print("Attempting to save DNG with comprehensive tags...")
     try:
-        dng = RAW2DNG()
-        # The pidng library seems to ignore the output_dir, so we pass an empty one
-        # and provide the full path to the convert method.
-        dng.options(tags, "")
-        dng.convert(image_data, filename=args.output_file)
-        print(f"Successfully converted {args.input_file} to {args.output_file}")
+        img.save(
+            args.output_file,
+            "TIFF",
+            tiffinfo=ifd,
+            compression="jpeg" # Attempt to use JPEG compression
+        )
+        print(f"Successfully created a file at {args.output_file}")
     except Exception as e:
-        print(f"Error converting to DNG: {e}")
+        print(f"Error saving DNG: {e}")
 
 if __name__ == '__main__':
     main()

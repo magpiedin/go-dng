@@ -85,10 +85,12 @@ def main():
 
     print("Attempting to save DNG with LinearizationTable...")
     try:
+        # CRITICAL FIX: Pass an empty exif data block to prevent copying source metadata
         img.save(
             args.output_file,
             "TIFF",
-            tiffinfo=ifd
+            tiffinfo=ifd,
+            exif=b''
         )
         print(f"Successfully created a file at {args.output_file}")
     except Exception as e:

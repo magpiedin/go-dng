@@ -41,26 +41,13 @@ def main():
 
     bits_per_sample = 16
     white_level = 65535
-    
-    # Create DNG tags for a linear DNG
-    tags = DNGTags()
-    tags.set(Tag.NewSubfileType, 0) # 0 = Main image
-    tags.set(Tag.PhotometricInterpretation, PhotometricInterpretation.Linear_Raw)
-
-    tags.set(Tag.ImageWidth, image.width)
-    tags.set(Tag.ImageLength, image.height)
-    tags.set(Tag.BitsPerSample, bits_per_sample)
     samples = len(image.getbands())
-    tags.set(Tag.SamplesPerPixel, samples)
-    tags.set(Tag.Software, "tiff-to-dng converter")
-
-    # Add tags for a linear DNG
-    tags.set(Tag.BlackLevel, [0] * samples)
-    tags.set(Tag.WhiteLevel, [white_level] * samples)
-
-    # Add metadata from TIFF info
-    if 'icc_profile' in image.info and image.info['icc_profile']:
-        tags.set(Tag.ICCProfile, list(image.info['icc_profile']))
+    
+    # Extract metadata from XMP first, so we can set all tags in order
+    icc_profile = list(image.info['icc_profile']) if 'icc_profile' in image.info and image.info['icc_profile'] else None
+    xmp_datetime = None
+    xmp_datetime_original = None
+    xmp_profile_name = None
 
     if 'xmp' in image.info:
         xmp_data = image.info['xmp']
@@ -83,38 +70,54 @@ def main():
                         else:
                             dt_obj = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
                         return dt_obj.strftime("%Y:%m:%d %H:%M:%S")
-                    except ValueError:
+                    except (ValueError, TypeError):
                         try:
                             dt_obj = datetime.strptime(date_str.split('.')[0], "%Y-%m-%dT%H:%M:%S")
                             return dt_obj.strftime("%Y:%m:%d %H:%M:%S")
                         except:
                             return None
 
-                create_date = root.find('.//xmp:CreateDate', ns)
-                if create_date is not None and create_date.text:
-                    formatted_date = format_date(create_date.text)
-                    if formatted_date:
-                        tags.set(Tag.DateTimeOriginal, formatted_date)
-
                 modify_date = root.find('.//xmp:ModifyDate', ns)
-                if modify_date is not None and modify_date.text:
-                    formatted_date = format_date(modify_date.text)
-                    if formatted_date:
-                        tags.set(Tag.DateTime, formatted_date)
+                if modify_date is not None:
+                    xmp_datetime = format_date(modify_date.text)
+
+                create_date = root.find('.//xmp:CreateDate', ns)
+                if create_date is not None:
+                    xmp_datetime_original = format_date(create_date.text)
 
                 camera_profile = root.find('.//crs:CameraProfile', ns)
                 if camera_profile is not None:
-                    tags.set(Tag.ProfileName, camera_profile.text)
+                    xmp_profile_name = camera_profile.text
 
             except ET.ParseError as e:
                 print(f"Error parsing XMP data: {e}")
 
-    if not tags.get(Tag.DateTime):
-        tags.set(Tag.DateTime, datetime.now().strftime("%Y:%m:%d %H:%M:%S"))
+    # Create DNG tags in ascending numerical order, as required by the spec
+    tags = DNGTags()
+    
+    tags.set(Tag.NewSubfileType, 0)                                      # 254
+    tags.set(Tag.ImageWidth, image.width)                               # 256
+    tags.set(Tag.ImageLength, image.height)                             # 257
+    tags.set(Tag.BitsPerSample, bits_per_sample)                        # 258
+    tags.set(Tag.PhotometricInterpretation, PhotometricInterpretation.Linear_Raw) # 262
+    tags.set(Tag.SamplesPerPixel, samples)                              # 277
+    tags.set(Tag.Software, "tiff-to-dng converter")                     # 305
+    tags.set(Tag.DateTime, xmp_datetime or datetime.now().strftime("%Y:%m:%d %H:%M:%S")) # 306
+    
+    if icc_profile:
+        tags.set(Tag.ICCProfile, icc_profile)                           # 34675
+        
+    if xmp_datetime_original:
+        tags.set(Tag.DateTimeOriginal, xmp_datetime_original)           # 36867
 
-    tags.set(Tag.DNGVersion, DNGVersion.V1_4)
-    tags.set(Tag.DNGBackwardVersion, DNGVersion.V1_0)
-    tags.set(Tag.UniqueCameraModel, "TIFF")
+    tags.set(Tag.DNGVersion, DNGVersion.V1_4)                           # 50706
+    tags.set(Tag.DNGBackwardVersion, DNGVersion.V1_0)                   # 50707
+    tags.set(Tag.UniqueCameraModel, "TIFF")                             # 50708
+    tags.set(Tag.BlackLevel, [0] * samples)                             # 50714
+    tags.set(Tag.WhiteLevel, [white_level] * samples)                   # 50717
+    
+    if xmp_profile_name:
+        tags.set(Tag.ProfileName, xmp_profile_name)                     # 50931
 
     # Use pidng to convert to DNG
     try:

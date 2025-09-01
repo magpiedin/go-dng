@@ -3,24 +3,7 @@
 import argparse
 import uuid
 from fractions import Fraction
-import numpy as np
 from PIL import Image, TiffImagePlugin
-
-def generate_srgb_linearization_table():
-    """
-    Generates a 256-entry table to map 8-bit sRGB values to 16-bit linear values.
-    This is the inverse of the sRGB EOTF.
-    """
-    table = []
-    for i in range(256):
-        v_srgb = i / 255.0
-        if v_srgb <= 0.04045:
-            v_linear = v_srgb / 12.92
-        else:
-            v_linear = ((v_srgb + 0.055) / 1.055) ** 2.4
-        # Scale to 16-bit range
-        table.append(int(round(v_linear * 65535)))
-    return tuple(table)
 
 def main():
     '''Setup and run tiff-to-dng conversion'''
@@ -39,7 +22,6 @@ def main():
         return
 
     # --- Isolate Pixel Data ---
-    # This is the crucial step to ensure no metadata is copied from the source.
     if source_img.mode != 'RGB':
         print(f"Error: Unsupported image mode '{source_img.mode}'. Only 'RGB' is supported.")
         return
@@ -57,40 +39,51 @@ def main():
     ifd[256] = img.width; ifd.tagtype[256] = LONG                      # ImageWidth
     ifd[257] = img.height; ifd.tagtype[257] = LONG                     # ImageHeight
     ifd[258] = (8, 8, 8); ifd.tagtype[258] = SHORT                     # BitsPerSample
-    ifd[259] = 1; ifd.tagtype[259] = SHORT                             # Compression (1 = Uncompressed)
+    ifd[259] = 7; ifd.tagtype[259] = SHORT                             # Compression (7=JPEG)
     ifd[262] = 32803; ifd.tagtype[262] = SHORT                         # PhotometricInterpretation (LinearRaw)
     ifd[274] = 1; ifd.tagtype[274] = SHORT                             # Orientation (1 = Normal)
     ifd[277] = 3; ifd.tagtype[277] = SHORT                             # SamplesPerPixel
     ifd[284] = 1; ifd.tagtype[284] = SHORT                             # PlanarConfiguration (Chunky)
+
+    # --- Tiling Tags - CRITICAL for JPEG Compression ---
+    ifd[322] = 192; ifd.tagtype[322] = LONG                            # TileWidth
+    ifd[323] = 224; ifd.tagtype[323] = LONG                            # TileLength
 
     # --- DNG-specific tags ---
     ifd[50706] = b'\x01\x04\x00\x00'; ifd.tagtype[50706] = BYTE        # DNGVersion
     ifd[50707] = b'\x01\x01\x00\x00'; ifd.tagtype[50707] = BYTE        # DNGBackwardVersion
     ifd[50708] = "TIFF"; ifd.tagtype[50708] = ASCII                    # UniqueCameraModel
 
-    ifd[50712] = generate_srgb_linearization_table()
-    ifd.tagtype[50712] = SHORT
+    # Using a simplified gamma 2.2 table. A more accurate one could be used.
+    ifd[50712] = tuple(int(round((i/255.0)**(2.2) * 65535)) for i in range(256))
+    ifd.tagtype[50712] = SHORT                                        # LinearizationTable
 
-    ifd[50714] = (Fraction(0,1), Fraction(0,1), Fraction(0,1)); ifd.tagtype[50714] = RATIONAL # BlackLevel
-    ifd[50717] = (255, 255, 255); ifd.tagtype[50717] = SHORT           # WhiteLevel
+    ifd[50714] = (Fraction(0,1), Fraction(0,1), Fraction(0,1)); ifd.tagtype[50714] = RATIONAL
+    ifd[50717] = (255, 255, 255); ifd.tagtype[50717] = SHORT
 
     cm1_floats = [1.9625, -0.6108, -0.3414, -0.9787, 1.9161, 0.0335, 0.0286, -0.1407, 1.349]
     ifd[50721] = tuple(Fraction(f).limit_denominator(10000) for f in cm1_floats)
     ifd.tagtype[50721] = SRATIONAL
 
+    ifd[50729] = (Fraction(1, 1), Fraction(1, 1), Fraction(1, 1)); ifd.tagtype[50729] = RATIONAL
+    as_shot_floats = [0.3457, 0.3585]
+    ifd[50730] = tuple(Fraction(f).limit_denominator(10000) for f in as_shot_floats)
+    ifd.tagtype[50730] = RATIONAL
+
+    ifd[50732] = Fraction(0, 1); ifd.tagtype[50732] = SRATIONAL
     ifd[50734] = Fraction(1, 1); ifd.tagtype[50734] = SRATIONAL
+    ifd[50781] = uuid.uuid4().bytes; ifd.tagtype[50781] = BYTE
+    ifd[50829] = (0, 0, img.height, img.width); ifd.tagtype[50829] = LONG
+    ifd[50970] = Fraction(1, 1); ifd.tagtype[50970] = RATIONAL
 
-    ifd[50781] = uuid.uuid4().bytes; ifd.tagtype[50781] = BYTE         # RawDataUniqueID
-    ifd[50829] = (0, 0, img.height, img.width); ifd.tagtype[50829] = LONG # ActiveArea
-
-    print("Attempting to save DNG with LinearizationTable...")
+    print("Attempting to save Tiled, JPEG-Compressed DNG...")
     try:
-        # CRITICAL FIX: Pass an empty exif data block to prevent copying source metadata
         img.save(
             args.output_file,
             "TIFF",
             tiffinfo=ifd,
-            exif=b''
+            compression='jpeg',
+            exif=b'' # Prevent copying any source EXIF data
         )
         print(f"Successfully created a file at {args.output_file}")
     except Exception as e:

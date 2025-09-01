@@ -3,6 +3,7 @@
 import argparse
 import uuid
 from fractions import Fraction
+import numpy as np
 from PIL import Image, TiffImagePlugin
 
 def main():
@@ -21,66 +22,65 @@ def main():
         print(f"Error: Unable to open file {args.input_file}")
         return
 
-    # Create a new blank image and paste the source pixels.
-    # This is a crucial step to prevent Pillow from copying any existing,
-    # unwanted metadata from the source TIFF file.
-    img = Image.new(source_img.mode, source_img.size)
-    img.paste(source_img)
-
-    ifd = TiffImagePlugin.ImageFileDirectory_v2()
-
-    if img.mode == 'RGB':
-        bits_per_sample = (8, 8, 8)
-        samples_per_pixel = 3
-    else:
-        print(f"Error: Unsupported image mode '{img.mode}'.")
+    # --- Image Data Linearization ---
+    # This is the critical step. The source sRGB data must be converted to linear.
+    if source_img.mode != 'RGB':
+        print(f"Error: Unsupported image mode '{source_img.mode}'. Only 'RGB' is supported.")
         return
+
+    # Convert image to numpy array, normalize to 0-1 float
+    srgb_data = np.array(source_img, dtype=np.float32) / 255.0
+
+    # Apply gamma correction (sRGB to linear)
+    # Using a simple gamma of 2.2 as an approximation.
+    linear_data = np.power(srgb_data, 2.2)
+
+    # Scale to 16-bit integer range
+    uint16_data = (linear_data * 65535).astype(np.uint16)
+    
+    # Create a new Pillow image from the 16-bit linear data
+    img = Image.fromarray(uint16_data, 'RGB')
+
+    # --- IFD and Tag Setup ---
+    ifd = TiffImagePlugin.ImageFileDirectory_v2()
 
     BYTE = 1; ASCII = 2; SHORT = 3; LONG = 4; RATIONAL = 5; SRATIONAL = 10
 
     # --- Populate IFD in strict numerical order ---
-    ifd[254] = 0; ifd.tagtype[254] = LONG
-    ifd[256] = img.width; ifd.tagtype[256] = LONG
-    ifd[257] = img.height; ifd.tagtype[257] = LONG
-    ifd[258] = bits_per_sample; ifd.tagtype[258] = SHORT
-    ifd[259] = 1; ifd.tagtype[259] = SHORT
-    ifd[262] = 32803; ifd.tagtype[262] = SHORT
-    ifd[277] = samples_per_pixel; ifd.tagtype[277] = SHORT
-    ifd[284] = 1; ifd.tagtype[284] = SHORT
-    
-    ifd[50706] = b'\x01\x04\x00\x00'; ifd.tagtype[50706] = BYTE
-    ifd[50707] = b'\x01\x01\x00\x00'; ifd.tagtype[50707] = BYTE
-    ifd[50708] = "TIFF"; ifd.tagtype[50708] = ASCII
-    
-    # CRITICAL FIX: RATIONAL/SRATIONAL tags expect Fraction objects, not tuples.
+    ifd[254] = 0; ifd.tagtype[254] = LONG                             # SubfileType
+    ifd[256] = img.width; ifd.tagtype[256] = LONG                      # ImageWidth
+    ifd[257] = img.height; ifd.tagtype[257] = LONG                     # ImageHeight
+    ifd[258] = (16, 16, 16); ifd.tagtype[258] = SHORT                  # BitsPerSample (now 16-bit)
+    ifd[259] = 1; ifd.tagtype[259] = SHORT                             # Compression (1 = Uncompressed)
+    ifd[262] = 32803; ifd.tagtype[262] = SHORT                         # PhotometricInterpretation (LinearRaw)
+    ifd[274] = 1; ifd.tagtype[274] = SHORT                             # Orientation (1 = Normal)
+    ifd[277] = 3; ifd.tagtype[277] = SHORT                             # SamplesPerPixel
+    ifd[284] = 1; ifd.tagtype[284] = SHORT                             # PlanarConfiguration (Chunky)
+
+    # --- DNG-specific tags ---
+    ifd[50706] = b'\x01\x04\x00\x00'; ifd.tagtype[50706] = BYTE        # DNGVersion
+    ifd[50707] = b'\x01\x01\x00\x00'; ifd.tagtype[50707] = BYTE        # DNGBackwardVersion
+    ifd[50708] = "TIFF"; ifd.tagtype[50708] = ASCII                    # UniqueCameraModel
+
+    # Using Fraction objects for RATIONAL/SRATIONAL tags
     cm1_floats = [1.9625, -0.6108, -0.3414, -0.9787, 1.9161, 0.0335, 0.0286, -0.1407, 1.349]
     ifd[50721] = tuple(Fraction(f).limit_denominator(10000) for f in cm1_floats)
     ifd.tagtype[50721] = SRATIONAL
-    
-    ifd[50729] = (Fraction(1, 1), Fraction(1, 1), Fraction(1, 1)); ifd.tagtype[50729] = RATIONAL
-    
-    as_shot_floats = [0.3457, 0.3585]
-    ifd[50730] = tuple(Fraction(f).limit_denominator(10000) for f in as_shot_floats)
-    ifd.tagtype[50730] = RATIONAL
 
-    ifd[50732] = Fraction(0, 1); ifd.tagtype[50732] = SRATIONAL
-    ifd[50733] = Fraction(1, 1); ifd.tagtype[50733] = RATIONAL
-    ifd[50734] = Fraction(1, 1); ifd.tagtype[50734] = RATIONAL
+    # For now, removing tags that caused validation warnings to focus on the CFA error.
+    # ifd[50730] = ... # AsShotWhiteXY
+    # ifd[50732] = ... # BaselineExposure
 
-    ifd[50778] = 0; ifd.tagtype[50778] = SHORT
-    ifd[50781] = uuid.uuid4().bytes; ifd.tagtype[50781] = BYTE
+    # Correcting type for BaselineSharpness
+    ifd[50734] = Fraction(1, 1); ifd.tagtype[50734] = SRATIONAL
 
-    ifd[50714] = (Fraction(0,1), Fraction(0,1), Fraction(0,1)); ifd.tagtype[50714] = RATIONAL
-    ifd[50717] = (255, 255, 255); ifd.tagtype[50717] = SHORT
+    ifd[50781] = uuid.uuid4().bytes; ifd.tagtype[50781] = BYTE         # RawDataUniqueID
+    ifd[50714] = (Fraction(0,1), Fraction(0,1), Fraction(0,1)); ifd.tagtype[50714] = RATIONAL # BlackLevel
+    ifd[50717] = (65535, 65535, 65535); ifd.tagtype[50717] = LONG      # WhiteLevel (now 16-bit)
 
-    ifd[50780] = (Fraction(1, 1), Fraction(1, 1)); ifd.tagtype[50780] = RATIONAL
-    ifd[50718] = (Fraction(0, 1), Fraction(0, 1)); ifd.tagtype[50718] = RATIONAL
-    ifd[50719] = (Fraction(img.width, 1), Fraction(img.height, 1)); ifd.tagtype[50719] = RATIONAL
+    ifd[50829] = (0, 0, img.height, img.width); ifd.tagtype[50829] = LONG # ActiveArea
 
-    ifd[50829] = (0, 0, img.height, img.width); ifd.tagtype[50829] = LONG
-    ifd[50970] = Fraction(1, 1); ifd.tagtype[50970] = RATIONAL
-
-    print("Attempting to save DNG with final tag format...")
+    print("Attempting to save DNG with linearized data...")
     try:
         img.save(
             args.output_file,
